@@ -1,0 +1,351 @@
+﻿@page "/weather"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+@using ZadaniaBlazor
+@using ZadaniaBlazor.Components
+@using ZadaniaBlazor.Components.Layout
+@using ZadaniaBlazor.Data
+@using ZadaniaBlazor.Data.Context
+@rendermode InteractiveServer
+
+@attribute [Authorize]
+@inject AuthenticationStateProvider AuthProvider
+@inject ApplicationDbContext Context
+
+<PageTitle>Prognoza pogody</PageTitle>
+
+<h1>Pogoda</h1>
+
+@* -- Sekcja wyboru miejscowości -- *@
+<div class="d-flex flex-wrap gap-3 mb-4 align-items-center">
+    @foreach (var city in UserCitiesList)
+    {
+        <div class="card text-center shadow-sm @(currentCity?.Id == city.Id ? "bg-primary text-white border-primary" : "bg-light")"
+             style="width: 140px; cursor: pointer; border-radius: 15px; transition: 0.3s; position: relative;"
+             @onclick="() => SwitchCity(city)">
+
+            <div class="card-body p-2 d-flex align-items-center justify-content-center" style="min-height: 90px;">
+                <div class="fw-bold text-truncate px-1" title="@city.CityName">
+                    @city.CityName
+                </div>
+
+                <button class="btn btn-sm p-0 border-0 @(currentCity?.Id == city.Id ? "text-white" : "text-danger")"
+                        style="position: absolute; top: 5px; right: 8px; font-size: 1.2rem; line-height: 1; opacity: 0.7;"
+                        @onclick:stopPropagation="true"
+                        @onclick="() => DeleteCity(city.Id)">
+                    &times;
+                </button>
+            </div>
+        </div>
+    }
+
+    @if (!isAddingCity)
+    {
+        <div class="card text-center shadow-sm bg-white"
+             style="width: 140px; height: 106px; cursor: pointer; border-radius: 15px; border: 2px dashed #ccc;"
+             @onclick="ShowAddCityInput">
+            <div class="card-body d-flex align-items-center justify-content-center">
+                <span style="font-size: 2rem; color: #007bff;">+</span>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card shadow-sm bg-white"
+             style="width: 200px; height: 106px; border-radius: 15px; border: 2px solid #007bff;">
+            <div class="card-body p-2 d-flex flex-column justify-content-center gap-2">
+                <input @bind="newCityName"
+                       @bind:event="oninput"
+                       @onkeyup="@(e => e.Key == "Enter" ? SaveNewCity() : null)"
+                       class="form-control form-control-sm"
+                       placeholder="Nazwa miasta..." />
+                <div class="d-flex gap-1">
+                    <button class="btn btn-primary btn-sm w-100" @onclick="SaveNewCity">Dodaj</button>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="CancelAdd">X</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (currentWeatherData != null && currentCity != null)
+{
+    <div class="card shadow-sm border-left-primary w-100">
+        <div class="card-body">
+            <h5 class="card-title">Pogoda: @currentCity.CityName</h5>
+            <p class="text-muted small">Odczyt: @currentCity.LastUpdate.ToString("dd.MM.yyyy HH:mm:ss")</p>
+
+            <div class="d-flex align-items-center mb-4">
+                <img src="https://openweathermap.org/img/wn/@(currentWeatherData.weather[0].icon)@@2x.png" width="60" />
+                <span class="display-6">@Math.Round(currentWeatherData.main.temp, 1)°C</span>
+            </div>
+
+            <hr />
+            <h6 class="mb-4">Prognoza godzinowa:</h6>
+
+            <div class="forecast-list">
+                @foreach (var dayGroup in groupedForecast)
+                {
+                    <div class="day-section mb-5">
+                        <h5 class="border-bottom pb-2 mb-3">
+                            @dayGroup.Key.ToString("dddd, dd MMMM")
+                        </h5>
+
+                        <div class="d-flex flex-wrap gap-3">
+                            @foreach (var hour in dayGroup)
+                            {
+                                <div class="card text-center shadow-sm border-0" style="width: 120px; background-color: #f8f9fa; border-radius: 12px;">
+                                    <div class="card-header py-1 bg-white small border-0" style="border-radius: 12px 12px 0 0;">
+                                        <strong>@DateTime.Parse(hour.dt_txt).ToString("HH:mm")</strong>
+                                    </div>
+                                    <div class="card-body p-2">
+                                        <img src="https://openweathermap.org/img/wn/@(hour.weather[0].icon).png" width="40" />
+                                        <div class="fw-bold">@Math.Round(hour.main.temp)°C</div>
+                                        <div style="font-size: 0.7rem; height: 2.2rem; overflow: hidden;" class="text-muted">
+                                            @hour.weather[0].description
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <button class="btn btn-sm btn-outline-info mt-3" @onclick="() => GetWeather(true)">
+                Odśwież teraz
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private string apiKey = "tajny klucz";
+    private UserCity? currentCity;
+    private WeatherResult? currentWeatherData;
+    private ForecastResult? forecastData;
+    private List<IGrouping<DateTime, ForecastItem>> groupedForecast = new();
+    private List<UserCity> UserCitiesList = new();
+    private bool isAddingCity = false;
+    private string newCityName = "";
+    private string? currentUserId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUserWeather();
+    }
+
+    private void ShowAddCityInput() => isAddingCity = true;
+
+    private async Task LoadUserWeather()
+    {
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        currentUserId = authState.User.FindFirst(c => c.Type.Contains("nameidentifier"))?.Value;
+
+        if (string.IsNullOrEmpty(currentUserId)) return;
+
+        UserCitiesList = await Context.UserCities
+            .AsNoTracking()
+            .Where(c => c.UserId == currentUserId)
+            .ToListAsync();
+
+        if (currentCity == null && UserCitiesList.Any())
+        {
+            currentCity = UserCitiesList.FirstOrDefault(c => c.IsDefault) ?? UserCitiesList.First();
+        }
+        else if (currentCity == null)
+        {
+            currentCity = new UserCity { CityName = "Warszawa", UserId = currentUserId };
+        }
+
+        await GetWeather(forceUpdate: false);
+        StateHasChanged();
+    }
+
+    private async Task GetWeather(bool forceUpdate)
+    {
+        if (currentCity == null) return;
+        bool isExpired = (DateTime.Now - currentCity.LastUpdate).TotalHours >= 3;
+
+        if (isExpired || forceUpdate || string.IsNullOrEmpty(currentCity.CurrentWeatherJson))
+        {
+            try
+            {
+                using var client = new HttpClient();
+                var currentJson = await client.GetStringAsync($"https://api.openweathermap.org/data/2.5/weather?q={currentCity.CityName}&units=metric&lang=pl&appid={apiKey}");
+                var forecastJson = await client.GetStringAsync($"https://api.openweathermap.org/data/2.5/forecast?q={currentCity.CityName}&units=metric&lang=pl&appid={apiKey}");
+
+                currentCity.CurrentWeatherJson = currentJson;
+                currentCity.ForecastWeatherJson = forecastJson;
+                currentCity.LastUpdate = DateTime.Now;
+
+                if (currentCity.Id > 0)
+                {
+                    Context.UserCities.Update(currentCity);
+                    await Context.SaveChangesAsync();
+                }
+            }
+            catch { }
+        }
+
+        if (!string.IsNullOrEmpty(currentCity?.CurrentWeatherJson))
+        {
+            try
+            {
+                // Opcje, które uodpornią nas na błędy w JSON (np. wielkość liter)
+                var options = new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    AllowTrailingCommas = true
+                };
+
+                // 1. Próba deserializacji pogody bieżącej
+                currentWeatherData = System.Text.Json.JsonSerializer.Deserialize<WeatherResult>(currentCity.CurrentWeatherJson, options);
+
+                // 2. Próba deserializacji prognozy (jeśli mamy JSON)
+                if (!string.IsNullOrEmpty(currentCity.ForecastWeatherJson))
+                {
+                    forecastData = System.Text.Json.JsonSerializer.Deserialize<ForecastResult>(currentCity.ForecastWeatherJson, options);
+
+                    if (forecastData?.list != null)
+                    {
+                        groupedForecast = forecastData.list
+                            .GroupBy(item => DateTime.TryParse(item.dt_txt, out var d) ? d.Date : DateTime.MinValue)
+                            .Where(g => g.Key != DateTime.MinValue) // Ignorujemy błędne daty
+                            .Take(5)
+                            .ToList();
+                    }
+                }
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                // Tutaj logujemy błąd, ale nie pozwalamy aplikacji "pójść na dno"
+                Console.WriteLine($"Błąd danych pogodowych dla {currentCity.CityName}: {ex.Message}");
+                currentWeatherData = null;
+                forecastData = null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Nieoczekiwany błąd: {ex.Message}");
+            }
+        }
+    }
+
+    private async Task SwitchCity(UserCity city)
+    {
+        currentCity = city;
+        await GetWeather(forceUpdate: false);
+        StateHasChanged();
+    }
+
+    private async Task DeleteCity(int id)
+    {
+        var city = await Context.UserCities.FindAsync(id);
+        if (city != null)
+        {
+            Context.UserCities.Remove(city);
+            await Context.SaveChangesAsync();
+            if (currentCity?.Id == id) currentCity = null;
+            await LoadUserWeather();
+        }
+    }
+
+    private async Task SaveNewCity()
+    {
+        if (!string.IsNullOrWhiteSpace(newCityName))
+        {
+            var city = new UserCity { CityName = newCityName, UserId = currentUserId, LastUpdate = DateTime.MinValue, IsDefault = !UserCitiesList.Any() };
+            Context.UserCities.Add(city);
+            await Context.SaveChangesAsync();
+            newCityName = "";
+            isAddingCity = false;
+            currentCity = city;
+            await LoadUserWeather();
+        }
+    }
+
+    private void CancelAdd()
+    {
+        isAddingCity = false;
+        newCityName = "";
+    }
+
+    public class WeatherResult
+    {
+        public MainInfo main { get; set; }
+        public WeatherInfo[] weather { get; set; }
+        public WindInfo wind { get; set; }
+        public string name { get; set; }
+    }
+
+    public class MainInfo
+    {
+        public double temp { get; set; }
+        public double feels_like { get; set; }
+        public int humidity { get; set; }
+    }
+
+    public class WeatherInfo
+    {
+        public string description { get; set; }
+        public string icon { get; set; }
+    }
+
+    public class WindInfo
+    {
+        public double speed { get; set; }
+    }
+
+    // - następne dni
+    public class ForecastResult
+    {
+        public string cod { get; set; }
+        public int message { get; set; }
+        public int cnt { get; set; }
+        public List<ForecastItem> list { get; set; }
+        public CityInfo city { get; set; }
+    }
+
+    public class ForecastItem
+    {
+        public long dt { get; set; }
+        public MainData main { get; set; }
+        public List<WeatherInfo> weather { get; set; }
+        public CloudsInfo clouds { get; set; }
+        public WindInfo wind { get; set; }
+        public int visibility { get; set; }
+        public double pop { get; set; }
+        public string dt_txt { get; set; }
+    }
+
+    public class MainData
+    {
+        public double temp { get; set; }
+        public double feels_like { get; set; }
+        public double temp_min { get; set; }
+        public double temp_max { get; set; }
+        public int pressure { get; set; }
+        public int humidity { get; set; }
+    }
+
+    public class CloudsInfo
+    {
+        public int all { get; set; }
+    }
+
+    public class CityInfo
+    {
+        public int id { get; set; }
+        public string name { get; set; }
+        public Coord coord { get; set; }
+        public string country { get; set; }
+        public int population { get; set; }
+        public int timezone { get; set; }
+    }
+
+    public class Coord
+    {
+        public double lat { get; set; }
+        public double lon { get; set; }
+    }
+}

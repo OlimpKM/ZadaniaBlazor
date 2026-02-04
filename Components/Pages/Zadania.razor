@@ -1,0 +1,286 @@
+﻿@page "/Zadania"
+@rendermode InteractiveServer
+@attribute [Authorize]
+
+@using Microsoft.AspNetCore.Authorization
+@using ZadaniaBlazor
+@using ZadaniaBlazor.Components
+@using ZadaniaBlazor.Components.Layout
+@using ZadaniaBlazor.Data
+
+@inject ZadaniaService ZadaniaService
+@inject NavigationManager Nav
+@inject UserClaimsService UserClaimsService
+
+<style>
+    /* Styl dla zadań zakończonych - przekreślenie i wyszarzenie */
+    .task-done {
+        text-decoration: line-through;
+        color: #888;
+        background-color: #f8f9fa;
+    }
+
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .table-hover tbody tr:hover {
+        background-color: rgba(0,123,255,0.05);
+    }
+</style>
+
+<div class="container mt-4">
+    @if (string.IsNullOrWhiteSpace(TokenTask))
+    {
+        <div class="d-flex justify-content-center mt-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Błąd...</span>
+            </div>
+            <span class="ms-3">Serwis zadań niedostępny...</span>
+        </div>
+    }
+    else
+    if (displayListTask == null)
+    {
+        <div class="d-flex justify-content-center mt-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Ładowanie...</span>
+            </div>
+            <span class="ms-3">Pobieranie zadań z API...</span>
+        </div>
+    }
+    else
+    {
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h3 class="text-primary"><i class="bi bi-list-check"></i> System Zadań OLIMP</h3>
+            <button class="btn btn-outline-primary btn-sm" @onclick="LoadData">
+                <i class="bi bi-arrow-clockwise"></i> Odśwież listę
+            </button>
+        </div>
+        @*--*@
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <div class="input-group">
+                            <span class="input-group-text bg-white border-end-0">🔍</span>
+                            <input type="text" class="form-control border-start-0" placeholder="Szukaj w tytule..."
+                                   @bind="searchTerm" @bind:event="oninput" @onkeyup="ApplyFiltersAndSort" />
+                        </div>
+                    </div>
+                    <div class="col-md-6 mt-2 mt-md-0">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="flexSwitchCheckDefault"
+                                   checked="@onlyPending"
+                                   @onchange="OnFilterChanged">
+                            <label class="form-check-label cursor-pointer" for="flexSwitchCheckDefault">
+                                Pokazuj tylko aktualne zadania
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @*--*@
+        <button class="btn btn-success mb-3" @onclick='() => Nav.NavigateTo("/zadanie/dodaj")'>
+            <i class="bi bi-plus-circle"></i> Nowe Zadanie
+        </button>
+
+        <div class="table-responsive">
+            <table class="table table-hover border">
+                <thead class="table-light">
+                    <tr>
+                        <th class="cursor-pointer" style="width: 70px;" @onclick='() => SortBy("Id")'>
+                            ID @(GetSortIcon("Id"))
+                        </th>
+                        <th class="cursor-pointer" style="width: 200px;" @onclick='() => SortBy("DataUtworzenia")'>
+                            Data dodania @(GetSortIcon("DataUtworzenia"))
+                        </th>
+                        <th class="cursor-pointer" @onclick='() => SortBy("Tytul")'>
+                            Tytuł Zadania @(GetSortIcon("Tytul"))
+                        </th>
+                        <th class="text-center" style="width: 120px;">Status</th>
+                        <th class="text-center" style="width: 120px;">Realizacja</th>
+                        <th class="text-center" style="width: 100px;">Akcje</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var z in displayListTask)
+                    {
+                        <tr class="@(z.CzyWykonane ? "task-done" : "")">
+                            <td class="align-middle">@z.Id</td>
+                            <td class="align-middle">@z.DataUtworzenia.ToString("dd.MM.yyyy HH:mm")</td>
+                            <td class="align-middle">@z.Tytul</td>
+                            <td class="align-middle">@z.Status</td>
+                            <td class="text-center align-middle">
+                                @if (z.CzyWykonane)
+                                {
+                                    <span class="badge bg-secondary rounded-pill">Zrealizowane</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-success rounded-pill">W realizacji</span>
+                                }
+                            </td>
+                            @* -- kolumna: AKCJE (pozątek) -- *@
+                            <td class="text-center align-middle">
+                                <div class="d-flex justify-content-center gap-2">
+                                    @* Przycisk Edycji *@
+                                    <button class="btn btn-outline-primary btn-sm shadow-sm"
+                                            @onclick='() => Nav.NavigateTo($"/zadanie/edycja/{z.Id}")'
+                                            title="Edytuj">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </button>
+
+                                    @* Przycisk Zmiany Statusu (Szybka akcja) *@
+                                    <button class="btn @(z.CzyWykonane ? "btn-outline-warning" : "btn-outline-success") btn-sm shadow-sm"
+                                            @onclick="() => PrzełączStatus(z)"
+                                            title="@(z.CzyWykonane ? "Przywróć" : "Zakończ")">
+                                        <i class="bi @(z.CzyWykonane ? "bi-arrow-counterclockwise" : "bi-check2-circle")"></i>
+                                    </button>
+                                </div>
+                            </td>
+                            @* -- kolumna: AKCJE (koniec) -- *@
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mt-3">
+            <div class="text-muted small">
+                Znaleziono: @totalFound zadań
+            </div>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                        <button class="page-link" @onclick="PrevPage">Poprzednia</button>
+                    </li>
+                    <li class="page-item disabled"><span class="page-link">Strona @currentPage</span></li>
+                    <li class="page-item @(totalFound <= currentPage * pageSize ? "disabled" : "")">
+                        <button class="page-link" @onclick="NextPage">Następna</button>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    }
+</div>
+
+@code {
+    // token zadania bieżacego użytkownika 
+    private string? TokenTask { get; set; }
+    // listy
+    private List<Zadanie> fullListTask = new List<Zadanie>();
+    private List<Zadanie> displayListTask = new List<Zadanie>();
+    // zadządzanie danymi
+    private int currentPage = 1;
+    private int pageSize = 10;
+    private int totalFound = 0;
+    private string searchTerm = string.Empty;
+    private string currentSortColumn = "Id";
+    private bool isAscending = true;
+    private bool onlyPending = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        TokenTask = await UserClaimsService.GetClaimValueAsync(Const.TokenTask);
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        if (!string.IsNullOrEmpty(TokenTask))
+        {
+            TokenTask = TokenTask;
+            fullListTask = await ZadaniaService.PobierzZadania(TokenTask);
+            ApplyFiltersAndSort();
+            StateHasChanged();
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        StateHasChanged();
+    }
+
+    private void ApplyFiltersAndSort()
+    {
+        if (fullListTask == null) return;
+
+        var query = fullListTask.AsQueryable();
+
+        // FILTR: tylko aktualne
+        if (onlyPending)
+        {
+            query = query.Where(z => z.CzyWykonane == false);
+        }
+
+        // FILTR: po tekście
+        if (!string.IsNullOrWhiteSpace(searchTerm))
+        {
+            query = query.Where(z => z.Tytul.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // Sortowanie (bez zmian)
+        query = currentSortColumn switch
+        {
+            "Id" => isAscending ? query.OrderBy(z => z.Id) : query.OrderByDescending(z => z.Id),
+            "DataUtworzenia" => isAscending ? query.OrderBy(z => z.DataUtworzenia) : query.OrderByDescending(z => z.DataUtworzenia),
+            "Tytul" => isAscending ? query.OrderBy(z => z.Tytul) : query.OrderByDescending(z => z.Tytul),
+            _ => query
+        };
+
+        totalFound = query.Count();
+        displayListTask = query.Skip((currentPage - 1) * pageSize).Take(pageSize).ToList();
+
+        StateHasChanged();
+    }
+
+    private void SortBy(string column)
+    {
+        if (currentSortColumn == column) isAscending = !isAscending;
+        else { currentSortColumn = column; isAscending = true; }
+        currentPage = 1; // Resetujemy stronę przy zmianie sortowania
+        ApplyFiltersAndSort();
+    }
+
+    private string GetSortIcon(string column)
+    {
+        if (currentSortColumn != column) return "↕";
+        return isAscending ? "▲" : "▼";
+    }
+
+    private void NextPage() 
+    { 
+       currentPage++; ApplyFiltersAndSort(); 
+    }
+    
+    private void PrevPage() 
+    { 
+       if (currentPage > 1) 
+       { 
+          currentPage--; 
+          ApplyFiltersAndSort(); 
+       } 
+    }
+
+    // aby odświeżyć listę po kliknięciu w checkbox
+    private async Task OnFilterChanged(ChangeEventArgs e)
+    {
+        onlyPending = (bool)e.Value;
+        // Resetujemy stronę na pierwszą
+        currentPage = 1;
+        // Uruchamiamy filtrowanie
+        ApplyFiltersAndSort();
+    }
+
+    private async Task PrzełączStatus(Zadanie z)
+    {
+        if (!string.IsNullOrWhiteSpace(TokenTask))
+        {
+           z.CzyWykonane = !z.CzyWykonane;
+           await ZadaniaService.ZapiszZadanie(z, TokenTask, false);
+           ApplyFiltersAndSort();
+        }
+    }
+}
