@@ -6,6 +6,8 @@
 
 Aplikacja webowa, zbudowana w oparciu o architekturę **Blazor Web App (Interactive Server)**. Projekt łączy w sobie moduł do zarządzania zadaniami, dashboard pogodowy oraz zintegrowany system tożsamości.
 
+![zdjecie](zdjecie.png)
+
 [Aplikacja na Microsoft Azure](https://zadaniablazor-gydtckb4ffg6gmeh.canadacentral-01.azurewebsites.net/)
 > Uwaga: Pierwsze uruchomienie może zająć od 10 do 90 sekund (wynika to z ograniczeń darmowego planu F1 Free / tzw. "cold start").
 
