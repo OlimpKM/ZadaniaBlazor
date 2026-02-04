@@ -1,6 +1,3 @@
-## Wesja na Microsoft Azure
-![Aplikacja na Microsoft Azure](https://zadaniablazor-gydtckb4ffg6gmeh.canadacentral-01.azurewebsites.net)
-* Uwaga: Pierwsze uruchomienie może zająć od 10 do 90 sekund (wynika to z ograniczeń darmowego planu F1 Free / tzw. "cold start").
 # System zadań & Weather Dashboard
 
 ![.NET](https://img.shields.io/badge/.NET%209-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)
